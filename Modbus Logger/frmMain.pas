@@ -1,0 +1,136 @@
+unit frmMain;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  modbus_unit,string_conversion_unit, StdCtrls, CPort, Spin;
+
+type
+  TForm1 = class(TForm)
+    ComPort1: TComPort;
+    btnCOMCfg: TButton;
+    btnCOMOpen: TButton;
+    memoDataRX: TMemo;
+    edCmd: TEdit;
+    Label1: TLabel;
+    spSlaveID: TSpinEdit;
+    spCodeID: TSpinEdit;
+    Label2: TLabel;
+    Label3: TLabel;
+    spAddrStart: TSpinEdit;
+    Label4: TLabel;
+    spNumPoint: TSpinEdit;
+    Label5: TLabel;
+    spTimeout: TSpinEdit;
+    cbNonModbus: TCheckBox;
+    procedure btnCOMCfgClick(Sender: TObject);
+    procedure btnCOMOpenClick(Sender: TObject);
+    procedure ComPort1AfterClose(Sender: TObject);
+    procedure ComPort1AfterOpen(Sender: TObject);
+    procedure edCmdKeyPress(Sender: TObject; var Key: Char);
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+  private
+    { Private declarations }
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+  data_rx_comport,cmd_str:string;
+
+implementation
+
+{$R *.DFM}
+
+{
+fungsi utk kirim perintah ke comport dan tggu sampai timeout ato ada data masuk (sinkronus rx)
+true -> tidak timeout
+false -> timeout
+}
+function send_cmd_wait_comport(var data_rx:string;acmd:string;acom:TComPort;timeout_val:integer):boolean;
+var
+        cnt_timeout:integer;
+        rx_chr:string;
+begin
+        data_rx:='';
+        if acom.Connected then
+                begin
+                        acom.WriteStr(acmd);         //kirim perintah
+
+                        cnt_timeout:=0;         //reset counter timeout
+                        repeat
+                                inc(cnt_timeout);
+                                sleep(10);
+                        until (acom.ReadStr(rx_chr,1)>0) or (cnt_timeout>(timeout_val/10));  //tggu sampai ada data masuk ato timeout
+
+                        if (cnt_timeout<=(timeout_val/10)) then     //jika tdk timeout -> ambil data selanjutnya
+                        begin
+                                data_rx:=rx_chr;
+                                while acom.ReadStr(rx_chr,1)>0 do          //ambil data masuk
+                                        data_rx:=data_rx+rx_chr;
+                                Result:=true;
+                        end
+                        else    //timeout -> set ke timeout
+                                begin
+                                        data_rx:='';
+                                        Result:=false;
+                                end;
+                end
+        else
+                Result:=false;
+end;
+
+procedure TForm1.btnCOMCfgClick(Sender: TObject);
+begin
+        ComPort1.ShowSetupDialog;
+end;
+
+procedure TForm1.btnCOMOpenClick(Sender: TObject);
+begin
+        ComPort1.Connected:=not ComPort1.Connected;
+end;
+
+procedure TForm1.ComPort1AfterClose(Sender: TObject);
+begin
+        btnCOMOpen.Caption:='COM Open';
+end;
+
+procedure TForm1.ComPort1AfterOpen(Sender: TObject);
+begin
+        btnCOMOpen.Caption:='COM Close';
+end;
+
+procedure TForm1.edCmdKeyPress(Sender: TObject; var Key: Char);
+begin
+if key=#13 then
+begin
+if not cbNonModbus.Checked then
+begin
+        cmd_str:=modbus_format2rtu(spSlaveID.Value,spCodeID.Value,spAddrStart.Value,spNumPoint.Value,$A001);
+        memoDataRX.Lines.Add(formatdatetime('dd/mm/yyyy hh:nn:ss:zzz',now)+' TX = '+ascii2hex_simple( cmd_str ,' $') );
+        if send_cmd_wait_comport(data_rx_comport, cmd_str ,ComPort1,spTimeout.Value) then
+                memoDataRX.Lines.Add(formatdatetime('dd/mm/yyyy hh:nn:ss:zzz',now)+' RX = '+ascii2hex_simple( data_rx_comport,' $') )
+        else
+                memoDataRX.Lines.Add( formatdatetime('dd/mm/yyyy hh:nn:ss:zzz',now)+' RX = Timeout' );
+end
+else
+begin
+        cmd_str:=decode_cmd_hex_ascii(edCmd.Text);
+        cmd_str:=cmd_str+chr(lo(modbus_crc(cmd_str,$A001)))+chr(hi(modbus_crc(cmd_str,$A001)));
+        memoDataRX.Lines.Add(formatdatetime('dd/mm/yyyy hh:nn:ss:zzz',now)+' TX = '+ascii2hex_simple( cmd_str ,' $') );
+        if send_cmd_wait_comport(data_rx_comport, cmd_str ,ComPort1,spTimeout.Value) then
+                memoDataRX.Lines.Add(formatdatetime('dd/mm/yyyy hh:nn:ss:zzz',now)+' RX = '+ascii2hex_simple( data_rx_comport,' $') )
+        else
+                memoDataRX.Lines.Add( formatdatetime('dd/mm/yyyy hh:nn:ss:zzz',now)+' RX = Timeout' );
+end;
+end;
+end;
+
+procedure TForm1.FormClose(Sender: TObject; var Action: TCloseAction);
+begin
+        ComPort1.Close;
+end;
+
+end.
